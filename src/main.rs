@@ -11,25 +11,40 @@ use rayon::prelude::ParallelIterator;
 use itertools::Itertools;
 use std::collections::HashMap;
 
-const MSET_SIZE: usize = 400;
+const MSET_SIZE: usize = 100;
 
 fn injector(i: u32, counter: &AtomicU64, addr: &str, r: crossbeam_channel::Receiver<Vec<(Vec<u8>,Vec<u8>,Vec<u8>)>>) -> Result<(), failure::Error> {
-    let client = redis::Client::open(addr)?;
+    let mut client = redis::Client::open(addr)?;
     let mut con = client.get_connection()?;
 
     let mut count = 0;
     while let Ok(bulk) = r.recv() {
         let len = bulk.len();
+
         let mut pipe = redis::pipe();
         let mut pipe = pipe.cmd("MSET");
-        for (key, value, _) in bulk.iter() {
+        for (key, value, _) in &bulk {
             pipe = pipe.arg(key.to_owned()).arg(value.to_owned());
         }
         pipe = pipe.ignore();
         for (key, _, expire_date) in bulk {
             pipe = pipe.cmd("EXPIREAT").arg(key).arg(expire_date).ignore();
         }
-        pipe.query(&mut con)?;
+
+        loop {
+            match pipe.query(&mut con) {
+                Ok(()) => break,
+                Err(e) => {
+                    println!("thread {:>4} redis connection failed: {:?}", i, e);
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+
+                    client = if let Ok(c) = redis::Client::open(addr) {c} else {continue};
+                    con = if let Ok(c) = client.get_connection() {c} else {continue};
+                    println!("thread {:>4} connected again", i);
+                }
+            }
+        }
+
         count += len;
         let cur = counter.fetch_add(len as u64, std::sync::atomic::Ordering::SeqCst);
         println!("thread {:>4} injected {:>8} entries - total: {:>8}", i, count, cur + len as u64);
