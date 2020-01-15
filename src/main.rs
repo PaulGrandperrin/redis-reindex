@@ -18,7 +18,9 @@ fn injector(i: u32, counter: &AtomicU64, addr: &str, r: crossbeam_channel::Recei
     let mut con = client.get_connection()?;
 
     let mut count = 0;
+    let mut iteration = 0;
     while let Ok(bulk) = r.recv() {
+
         let len = bulk.len();
 
         let mut pipe = redis::pipe();
@@ -32,9 +34,16 @@ fn injector(i: u32, counter: &AtomicU64, addr: &str, r: crossbeam_channel::Recei
         }
 
         loop {
-            match pipe.query(&mut con) {
-                Ok(()) => break,
-                Err(e) => {
+            iteration += 1;
+            match (pipe.query(&mut con), iteration % 100 == 0) {
+                (Ok(()), false) => break,
+                (Ok(()), true) => {
+                    println!("thread {:>4} renewing connection", i);
+                    client = if let Ok(c) = redis::Client::open(addr) {c} else {continue};
+                    con = if let Ok(c) = client.get_connection() {c} else {continue};
+                    continue;
+                },
+                (Err(e), _) => {
                     println!("thread {:>4} redis connection failed: {:?}", i, e);
                     std::thread::sleep(std::time::Duration::from_secs(2));
 
@@ -48,6 +57,7 @@ fn injector(i: u32, counter: &AtomicU64, addr: &str, r: crossbeam_channel::Recei
         count += len;
         let cur = counter.fetch_add(len as u64, std::sync::atomic::Ordering::SeqCst);
         println!("thread {:>4} injected {:>8} entries - total: {:>8}", i, count, cur + len as u64);
+
     }
 
     Ok(())
@@ -63,7 +73,7 @@ fn main() -> Result<(), failure::Error> {
 
         let (s, r) = crossbeam_channel::bounded(1000  );
 
-        for i in 0..16 {
+        for i in 0..256 {
             let r = r.clone();
             let addr = addr.clone();
             let a = &counter;
