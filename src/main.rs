@@ -73,13 +73,15 @@ fn main() -> Result<(), failure::Error> {
                     set_count += 1;
                 }
                 [redis::Value::Data(command), redis::Value::Data(key), redis::Value::Data(expire_date)] if &*command == b"EXPIREAT"  => {
-                    let (key, value) = hm.remove_entry(key).expect(&format!("Got EXPIREAT of unknown key: {}", String::from_utf8_lossy(key)));
-
-                    mset_vec.push((key, value, expire_date.to_owned()));
-                    if mset_vec.len() == mset_vec.capacity() {
-                        let mut tmp = Vec::with_capacity(MSET_SIZE);
-                        std::mem::swap(&mut tmp, &mut mset_vec);
-                        s.send(tmp);
+                    if let Some((key, value)) = hm.remove_entry(key) {
+                        mset_vec.push((key, value, expire_date.to_owned()));
+                        if mset_vec.len() == mset_vec.capacity() {
+                            let mut tmp = Vec::with_capacity(MSET_SIZE);
+                            std::mem::swap(&mut tmp, &mut mset_vec);
+                            s.send(tmp);
+                        }
+                    } else {
+                        println!("Got EXPIREAT of unknown key: {}", String::from_utf8_lossy(key));
                     }
                 }
                 [ref c @ ..] => {
