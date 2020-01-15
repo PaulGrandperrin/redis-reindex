@@ -12,7 +12,7 @@ use itertools::Itertools;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const MSET_SIZE: usize = 100;
+const MSET_SIZE: usize = 200;
 
 fn injector(i: u32, global_expired_count: &AtomicU64, global_inserted_count: &AtomicU64, addr: &str, r: crossbeam_channel::Receiver<Vec<(Vec<u8>,Vec<u8>,Vec<u8>)>>) -> Result<(), failure::Error> {
     let mut client = redis::Client::open(addr)?;
@@ -84,7 +84,7 @@ fn main() -> Result<(), failure::Error> {
 
         let (s, r) = crossbeam_channel::bounded(1000  );
 
-        for i in 0..8 {
+        for i in 0..128 {
             let r = r.clone();
             let addr = addr.clone();
             let gic = &global_inserted_count;
@@ -140,7 +140,7 @@ fn main() -> Result<(), failure::Error> {
     let mut pipe = redis::pipe();
     let mut pipe = &mut pipe;
     for (key, value) in hm {
-        pipe = pipe.cmd("SET").arg(key).arg(value).ignore();
+        pipe = pipe.cmd("SET").arg(key).arg(value).arg("EX").arg("3600").ignore();
     }
     pipe.query::<()>(&mut con).unwrap();
     println!("Done injecting keys without EXPIREAT");
